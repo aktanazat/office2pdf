@@ -1091,10 +1091,18 @@ fn test_row_without_dimension_uses_sheet_default_height() {
 }
 
 #[test]
-fn test_wrapping_row_without_custom_height_stays_auto() {
-    // Excel auto-grows rows containing wrapped cells unless customHeight is
-    // set; our text metrics differ slightly from Excel's, so a fixed height
-    // could clip a line — keep those rows content-driven.
+fn test_wrapping_row_uses_the_height_excel_recorded() {
+    // A wrapping row used to be left content-driven whenever `customHeight`
+    // was false, on the theory that Excel re-grows it on open and a fixed
+    // height could clip a line. A native Excel export of
+    // `office2pdf_repository_workbook.xlsx` disproves that: its data rows all
+    // carry `ht="15"` with `customHeight="false"` and wrapped cells, and Excel
+    // prints them at exactly that height. Leaving them auto printed the
+    // workbook on 25 pages against Excel's 23 (issue #608).
+    //
+    // Excel writes back the height it auto-fitted, so the recorded value
+    // already covers however many lines the cell wraps to; the renderer
+    // divides it by that line count rather than clipping.
     let data = build_xlsx_formatted(|sheet| {
         let cell = sheet.get_cell_mut("A1");
         cell.set_value("줄바꿈이 있는 긴 텍스트가 이 셀에 들어 있습니다");
@@ -1107,8 +1115,31 @@ fn test_wrapping_row_without_custom_height_stays_auto() {
     let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
     let tp = get_sheet_page(&doc, 0);
     assert_eq!(
+        tp.table.rows[0].height,
+        Some(28.0),
+        "a wrapping row prints at the height Excel recorded for it"
+    );
+}
+
+#[test]
+fn test_row_without_recorded_height_and_wrapping_cell_stays_auto() {
+    // The auto path still applies where it is the only sensible answer: no
+    // recorded `ht` at all, so there is nothing to honour and the content has
+    // to decide.
+    let data = build_xlsx_formatted(|sheet| {
+        let cell = sheet.get_cell_mut("A1");
+        cell.set_value("줄바꿈이 있는 긴 텍스트가 이 셀에 들어 있습니다");
+        cell.get_style_mut().get_alignment_mut().set_wrap_text(true);
+        let row = sheet.get_row_dimension_mut(&1);
+        row.set_height(0.0);
+        row.set_custom_height(false);
+    });
+    let parser = XlsxParser;
+    let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
+    let tp = get_sheet_page(&doc, 0);
+    assert_eq!(
         tp.table.rows[0].height, None,
-        "auto-sized wrapping rows stay content-driven"
+        "a wrapping row with no recorded height stays content-driven"
     );
 }
 

@@ -1669,3 +1669,107 @@ fn test_caption_list_numbers_in_the_target_sections_format() {
         output.source
     );
 }
+
+/// Excel's `<row ht="…"/>` is the row's *total* printed height, and the text
+/// sits inside it. office2pdf emitted the height as a Typst row track but let
+/// the cell keep the default 0.65em leading on top of the face's own box, so
+/// every line asked for ~1.83em and pushed the track open — rows printed about
+/// 45% tall (issue #608). A sheet row that declares its height pins the line to
+/// it instead.
+#[test]
+fn test_sheet_row_height_pins_the_cell_line_box() {
+    use crate::ir::{Insets, Table, TableCell, TableRow};
+
+    let cell = TableCell {
+        content: vec![Block::Paragraph(Paragraph {
+            style: ParagraphStyle::default(),
+            runs: vec![Run {
+                text: "office2pdf".to_string(),
+                style: TextStyle {
+                    font_size: Some(10.0),
+                    font_family: Some("Calibri".to_string()),
+                    ..TextStyle::default()
+                },
+                href: None,
+                footnote: None,
+            }],
+        })],
+        col_span: 1,
+        row_span: 1,
+        border: None,
+        background: None,
+        data_bar: None,
+        icon_text: None,
+        icon_color: None,
+        spill_width: None,
+        vertical_align: None,
+        padding: None,
+    };
+    let page = Page::Sheet(SheetPage {
+        name: "Sheet1".to_string(),
+        size: PageSize::default(),
+        margins: Margins::default(),
+        table: Table {
+            rows: vec![TableRow {
+                cells: vec![cell],
+                height: Some(15.0),
+            }],
+            column_widths: vec![120.0],
+            header_row_count: 0,
+            non_repeating_header_row_count: 0,
+            alignment: None,
+            default_cell_padding: Some(Insets {
+                top: 1.0,
+                right: 2.0,
+                bottom: 1.5,
+                left: 2.0,
+            }),
+            use_content_driven_row_heights: false,
+            default_vertical_align: None,
+        },
+        header: None,
+        footer: None,
+        charts: vec![],
+        images: Vec::new(),
+        text_boxes: Vec::new(),
+    });
+
+    let output = generate_typst(&make_doc(vec![page])).unwrap();
+
+    assert!(
+        output.source.contains("#set par(leading: 0pt)"),
+        "the sheet cell drops the default leading that pushed the track open: {}",
+        output.source
+    );
+    // 15pt row less 1.0 + 1.5 of padding leaves 12.5pt for a 10pt line: the
+    // emitted edges have to sum to 1.25em, not the ~1.83em the default model
+    // asked for.
+    let edges: Vec<f64> = regex_edges(&output.source);
+    assert_eq!(
+        edges.len(),
+        2,
+        "one top-edge/bottom-edge pair is emitted: {}",
+        output.source
+    );
+    let total: f64 = edges[0] + edges[1];
+    assert!(
+        (total - 1.25).abs() < 0.01,
+        "line box spans the declared row less its padding, got {total}em: {}",
+        output.source
+    );
+}
+
+/// Pull the `top-edge`/`bottom-edge` em values out of generated Typst.
+fn regex_edges(source: &str) -> Vec<f64> {
+    let mut values: Vec<f64> = Vec::new();
+    for (marker, sign) in [("top-edge: ", 1.0), ("bottom-edge: -", 1.0)] {
+        if let Some(start) = source.find(marker) {
+            let rest = &source[start + marker.len()..];
+            let end = rest.find("em").unwrap_or(0);
+            if let Ok(value) = rest[..end].parse::<f64>() {
+                values.push(value * sign);
+            }
+        }
+    }
+    values
+}

@@ -542,12 +542,16 @@ fn printed_row_height(
     let is_custom_height: bool = row_dimension
         .map(|row| *row.get_custom_height())
         .unwrap_or(false);
-    if !is_custom_height && row_has_wrapping_cell() {
-        return None;
-    }
     let declared_height: Option<f64> = row_dimension
         .map(|row| *row.get_height())
         .filter(|height| *height > 0.0);
+    // A wrapping cell only makes the row auto-height when the row records no
+    // height of its own. Excel writes the height it last computed into `ht`
+    // and prints that, wrapping or not, so a recorded height stays
+    // authoritative (issue #608).
+    if !is_custom_height && declared_height.is_none() && row_has_wrapping_cell() {
+        return None;
+    }
     declared_height
         .or_else(|| {
             let sheet_default: f64 = *sheet.get_sheet_format_properties().get_default_row_height();

@@ -357,6 +357,16 @@ fn generate_table_cell(
     row_height: Option<f64>,
     ctx: &mut GenCtx,
 ) -> Result<(), ConvertError> {
+    // The row's declared height less the padding this cell actually uses is
+    // what one line has to fit inside (issue #608). A cell spanning rows is
+    // excluded: its content is sized by the rows together, not by this one.
+    let padding: Insets = cell.padding.unwrap_or(default_cell_padding);
+    let enclosing_sheet_row_line_pt: Option<f64> = ctx.sheet_row_line_pt;
+    ctx.sheet_row_line_pt = row_height
+        .filter(|_| cell.row_span <= 1)
+        .map(|height| height - padding.top - padding.bottom)
+        .filter(|available| *available > 0.0);
+
     let needs_cell_fn = clamped_colspan > 1
         || cell.row_span > 1
         || cell.border.is_some()
@@ -454,6 +464,7 @@ fn generate_table_cell(
         generate_cell_content(out, &cell.content, ctx)?;
     }
     out.push_str("],\n");
+    ctx.sheet_row_line_pt = enclosing_sheet_row_line_pt;
     Ok(())
 }
 
@@ -676,6 +687,7 @@ fn generate_cell_content(
                 ctx.default_tab_width_pt,
                 ctx.line_grid_pitch,
                 ctx.row_has_east_asian_text,
+                ctx.sheet_row_line_pt,
             ),
             Block::Paragraph(para) => generate_cell_paragraph(
                 out,
@@ -683,6 +695,7 @@ fn generate_cell_content(
                 ctx.default_tab_width_pt,
                 ctx.line_grid_pitch,
                 ctx.row_has_east_asian_text,
+                ctx.sheet_row_line_pt,
             ),
             Block::Table(table) => {
                 if ctx.table_depth < MAX_TABLE_DEPTH {
@@ -719,6 +732,7 @@ fn generate_cell_paragraph(
     default_tab_width_pt: f64,
     line_grid_pitch: Option<f64>,
     row_has_east_asian_text: bool,
+    sheet_row_line_pt: Option<f64>,
 ) {
     let style: &ParagraphStyle = &para.style;
     let alignment = style.alignment;
@@ -735,8 +749,12 @@ fn generate_cell_paragraph(
     // text takes 1.3 times that line, like body text, and a snapping grid's
     // pitch above it — decided once per row so every cell in it shares a
     // baseline, the numeric ones included (issues #498, #518).
+    // A sheet row states its own total height, so the line is pinned to it
+    // rather than derived from the font the way a Word row's is (issue #608).
     let line_height_settings: Option<String> =
-        word_cell_line_box_settings(&para.runs, style, line_grid_pitch, row_has_east_asian_text);
+        sheet_cell_line_box_settings(&para.runs, style, sheet_row_line_pt).or_else(|| {
+            word_cell_line_box_settings(&para.runs, style, line_grid_pitch, row_has_east_asian_text)
+        });
     let has_block_wrapper = cell_paragraph_needs_block_wrapper(style)
         || align_str.is_some()
         || line_height_settings.is_some();

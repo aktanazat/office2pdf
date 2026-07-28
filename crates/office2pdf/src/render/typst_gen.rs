@@ -96,6 +96,10 @@ struct GenCtx {
     /// line box. Decided once per row so every cell in it shares a baseline,
     /// which reading each cell's own text could not guarantee (issue #498).
     row_has_east_asian_text: bool,
+    /// The height one line has inside the current sheet row: the row's
+    /// declared `ht` less its cell padding. `None` outside a sheet row, or
+    /// where the row states no height of its own.
+    sheet_row_line_pt: Option<f64>,
     /// Numerals the active section's `PAGE` fields render in. A header is
     /// generated as part of its page's setup, so the section's `w:pgNumType
     /// w:fmt` reaches the field through the context rather than through the
@@ -112,6 +116,7 @@ impl GenCtx {
             table_depth: 0,
             line_grid_pitch: None,
             row_has_east_asian_text: false,
+            sheet_row_line_pt: None,
             page_number_format: PageNumberFormat::default(),
             document_default_tab_stop_pt: None,
             default_tab_width_pt: DEFAULT_TAB_WIDTH_PT,

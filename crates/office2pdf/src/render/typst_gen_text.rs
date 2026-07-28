@@ -1491,3 +1491,54 @@ pub(super) fn escape_typst(text: &str) -> String {
     }
     result
 }
+
+/// Pin a sheet cell's line to the height its row declared.
+///
+/// Excel's `<row ht="…"/>` is the row's *total* printed height; the text sits
+/// inside it and overflows when it does not fit. office2pdf emits that height
+/// as a Typst row track, but a cell otherwise keeps the default
+/// `par(leading: 0.65em)` on top of the face's own ascent and descent, so one
+/// line asks for roughly 1.83em however short the row is and pushes the track
+/// open — rows printed about 45% tall (issue #608).
+///
+/// Scaling the face's own ascent/descent to the available height keeps the
+/// baseline where the font puts it proportionally, and zeroing the leading
+/// stops the track from being reopened between lines.
+///
+/// `None` when the paragraph states its own line treatment, when the row
+/// declares no height, or when the font's metrics are unknown — the row track
+/// is then the only constraint, as before.
+pub(super) fn sheet_cell_line_box_settings(
+    runs: &[Run],
+    style: &ParagraphStyle,
+    line_pt: Option<f64>,
+) -> Option<String> {
+    let line_pt: f64 = line_pt.filter(|available| *available > 0.0)?;
+    if style.line_spacing.is_some() || style.line_box.is_some() {
+        return None;
+    }
+    let family: &str = east_asian_aware_metric_family(runs)?;
+    let (ascender_em, descender_em, _) = crate::render::pdf::font_line_metrics_em(family)?;
+    let metric_em: f64 = ascender_em + descender_em;
+    if metric_em <= 0.0 {
+        return None;
+    }
+    let font_size: f64 = paragraph_font_size_pt(runs);
+    if font_size <= 0.0 {
+        return None;
+    }
+    // Excel's `ht` covers every line the cell wraps to, not one line, because
+    // Excel wrote back the height it auto-fitted. Dividing by the number of
+    // lines that height implies recovers the per-line share; pinning each line
+    // to the whole row instead pushed the later lines out of the cell and lost
+    // their text.
+    let natural_pt: f64 = metric_em * font_size;
+    let line_count: f64 = (line_pt / natural_pt).round().max(1.0);
+    let target_em: f64 = line_pt / line_count / font_size;
+    let scale: f64 = target_em / metric_em;
+    Some(format!(
+        "#set text(top-edge: {}em, bottom-edge: -{}em)\n#set par(leading: 0pt)\n",
+        format_f64(ascender_em * scale),
+        format_f64(descender_em * scale)
+    ))
+}
