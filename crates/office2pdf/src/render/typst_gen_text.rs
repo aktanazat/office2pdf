@@ -1532,13 +1532,15 @@ pub(super) fn sheet_cell_line_box_settings(
     // lines that height implies recovers the per-line share; pinning each line
     // to the whole row instead pushed the later lines out of the cell and lost
     // their text.
-    let natural_pt: f64 = metric_em * font_size;
-    let line_count: f64 = (line_pt / natural_pt).round().max(1.0);
-    let target_em: f64 = line_pt / line_count / font_size;
-    let scale: f64 = target_em / metric_em;
+    // Drop the leading and sit the line on the face's own metric box. Scaling
+    // the box to the row instead squeezed a two-line cell into one line's
+    // share and pushed its second line onto the next row, losing the text.
+    // Excel's `ht` already covers however many lines the cell wraps to, so a
+    // natural box in a row sized from `ht` lands where Excel puts it.
+    let _ = line_pt;
     Some(format!(
         "#set text(top-edge: {}em, bottom-edge: -{}em)\n#set par(leading: 0pt)\n",
-        format_f64(ascender_em * scale),
-        format_f64(descender_em * scale)
+        format_f64(ascender_em),
+        format_f64(descender_em)
     ))
 }
