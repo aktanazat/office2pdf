@@ -45,6 +45,21 @@ def text_op(char: str, x: float, baseline_y: float) -> str:
     )
 
 
+def rotated_text_op(text: str, origin_x: float, origin_y: float) -> str:
+    """One 45-degree fill_text whose glyphs share a text-space baseline."""
+    glyphs = "\n".join(
+        f'<g unicode="{char}" glyph="2" x="{index * 10}" y="100" adv=".5"/>'
+        for index, char in enumerate(text)
+    )
+    return (
+        '<fill_text transform=".70710678 -.70710678 .70710678 .70710678 '
+        f'{origin_x} {origin_y}">\n'
+        '<span font="AAAAAA+ArialMT" wmode="0" trm="44 0 0 44">\n'
+        f"{glyphs}\n"
+        "</span>\n</fill_text>"
+    )
+
+
 class TracePageSplitTest(unittest.TestCase):
     def test_splits_page_without_number_attribute(self) -> None:
         doc = trace_page(text_op("A", 72.0, 100.0), numbered=False)
@@ -62,6 +77,20 @@ class TracePageSplitTest(unittest.TestCase):
             ]
         )
         self.assertEqual(len(compare_render.TRACE_PAGE_RE.split(doc)[1:]), 2)
+
+
+class AffineTextPositionTest(unittest.TestCase):
+    def test_rotated_text_uses_the_complete_affine_transform(self) -> None:
+        trace = trace_page(rotated_text_op("AB", 500.0, 600.0), numbered=True)
+
+        with mock.patch.object(compare_render.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=trace)
+            lines = compare_render.baseline_lines(Path("rotated.pdf"))
+
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].text, "AB")
+        self.assertAlmostEqual(lines[0].x_min, 570.710678, places=5)
+        self.assertAlmostEqual(lines[0].y_min, 663.6396102, places=5)
 
 
 def only_on_path(*names: str):

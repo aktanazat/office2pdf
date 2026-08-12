@@ -45,7 +45,7 @@ WORD_RE = re.compile(
     re.S,
 )
 FILL_TEXT_RE = re.compile(
-    r'<fill_text[^>]*transform="([-0-9.]+) [-0-9.]+ [-0-9.]+ ([-0-9.]+) '
+    r'<fill_text[^>]*transform="([-0-9.]+) ([-0-9.]+) ([-0-9.]+) ([-0-9.]+) '
     r'([-0-9.]+) ([-0-9.]+)"[^>]*>(.*?)</fill_text>',
     re.S,
 )
@@ -149,15 +149,18 @@ def require_vision_artifact_dependencies(artifacts_dir: Path | None) -> None:
 
 
 def baseline_lines(pdf: Path) -> list[TextLine]:
-    """Text lines positioned by their true baseline, via `mutool draw -F trace`.
+    """Text-line anchors from `mutool draw -F trace` affine coordinates.
 
-    A `<fill_text>` carries the text-space matrix, so a glyph's baseline is
-    `ty + d * gy` and its x is `a * gx + tx`. Office exports on macOS place
-    text in a scaled space (`transform=".24 0 0 -.24 0 201.8"` with `trm="92"`
-    for 22pt text) while ours are plain translations; one formula covers both.
+    A `<fill_text>` carries the complete text-space matrix, so each glyph maps
+    to `x = a * gx + c * gy + tx` and `y = b * gx + d * gy + ty`. Office
+    exports on macOS often use scaled or rotated text spaces while ours are
+    commonly plain translations; the same affine formula covers both.
 
-    Baselines jitter by fractions of a point inside one visual line, so rows
-    are bucketed to 1pt before being joined.
+    For non-rotated text, baselines jitter by fractions of a point inside one
+    visual line, so rows are bucketed to 1pt before being joined. A rotated or
+    skewed `<fill_text>` is already one visual run and cannot share a horizontal
+    baseline bucket; it stays intact and uses the minimum transformed glyph
+    coordinates as its comparable spatial anchor.
     """
     trace = subprocess.run(
         ["mutool", "draw", "-F", "trace", "-o", "-", str(pdf)],
@@ -169,17 +172,38 @@ def baseline_lines(pdf: Path) -> list[TextLine]:
     lines: list[TextLine] = []
     for page_index, page in enumerate(TRACE_PAGE_RE.split(trace.stdout)[1:]):
         rows: dict[int, list[tuple[float, float, str]]] = {}
+        rotated_lines: list[TextLine] = []
         for match in FILL_TEXT_RE.finditer(page):
-            scale_x, scale_y = float(match.group(1)), float(match.group(2))
-            translate_x, translate_y = float(match.group(3)), float(match.group(4))
-            for glyph in GLYPH_RE.finditer(match.group(5)):
+            scale_x = float(match.group(1))
+            shear_y = float(match.group(2))
+            shear_x = float(match.group(3))
+            scale_y = float(match.group(4))
+            translate_x, translate_y = float(match.group(5)), float(match.group(6))
+            transformed_glyphs: list[tuple[float, float, str]] = []
+            for glyph in GLYPH_RE.finditer(match.group(7)):
                 char = glyph.group(1)
                 if not char.strip():
                     continue
-                baseline = translate_y + scale_y * float(glyph.group(3))
-                rows.setdefault(round(baseline), []).append(
-                    (translate_x + scale_x * float(glyph.group(2)), baseline, char)
-                )
+                glyph_x, glyph_y = float(glyph.group(2)), float(glyph.group(3))
+                x = translate_x + scale_x * glyph_x + shear_x * glyph_y
+                y = translate_y + shear_y * glyph_x + scale_y * glyph_y
+                transformed_glyphs.append((x, y, char))
+            if abs(shear_x) > 1e-9 or abs(shear_y) > 1e-9:
+                text = re.sub(
+                    r"\s+", " ", "".join(glyph[2] for glyph in transformed_glyphs)
+                ).strip()
+                if text:
+                    rotated_lines.append(
+                        TextLine(
+                            page_index,
+                            min(glyph[0] for glyph in transformed_glyphs),
+                            min(glyph[1] for glyph in transformed_glyphs),
+                            text,
+                        )
+                    )
+            else:
+                for x, baseline, char in transformed_glyphs:
+                    rows.setdefault(round(baseline), []).append((x, baseline, char))
         for key in sorted(rows):
             glyphs = sorted(rows[key])
             text = re.sub(r"\s+", " ", "".join(glyph[2] for glyph in glyphs)).strip()
@@ -196,6 +220,7 @@ def baseline_lines(pdf: Path) -> list[TextLine]:
                         text,
                     )
                 )
+        lines.extend(rotated_lines)
     return lines
 
 
