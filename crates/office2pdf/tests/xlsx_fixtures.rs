@@ -2240,6 +2240,51 @@ fn structure_fit_to_page_sheet_without_declared_bounds_fits_its_rows_on_one_page
     );
 }
 
+/// The reported monthly-budget workbook formats zero-valued entry cells with
+/// the third section of `#,##0_);[Red]\(#,##0\);\-\ \ `. Excel prints the
+/// escaped dash from that section. All 71 cells are explicit `<v>0</v>` cells
+/// in the worksheet XML; falling back to the positive section printed `0`
+/// instead (issue #1262).
+#[test]
+fn structure_monthly_budget_zero_values_use_the_third_number_format_section() {
+    let pages = sheet_pages("issue_1181_fit_to_height.xlsx");
+    let budget = sheet_page_named(&pages, "Monthly college budget");
+    let zero_cells: &[(usize, &[usize])] = &[
+        (31, &[2, 3]),
+        (34, &[5, 6, 7, 8, 9, 10, 11, 12, 13]),
+        (45, &[2, 3, 5, 6, 8, 9, 11, 12, 13]),
+        (46, &[2, 3, 5, 6, 8, 9, 11, 12, 13]),
+        (49, &[2, 3, 5, 6, 8, 9, 11, 12, 13]),
+        (50, &[2, 3]),
+        (56, &[3, 4, 5, 6, 7, 9, 10, 11]),
+        (59, &[2, 3, 4]),
+        (61, &[2, 3, 4, 5, 6, 8, 9, 10, 11, 12]),
+        (62, &[2, 3]),
+        (63, &[2, 3, 4]),
+        (64, &[2, 3, 4]),
+        (68, &[2, 3]),
+    ];
+
+    assert_eq!(
+        zero_cells
+            .iter()
+            .map(|(_, cells)| cells.len())
+            .sum::<usize>(),
+        71
+    );
+    for (row_index, column_indexes) in zero_cells {
+        for column_index in *column_indexes {
+            assert_eq!(
+                table_cell_text(&budget.table.rows[*row_index].cells[*column_index]),
+                "-",
+                "worksheet cell at row {}, column {} must use the zero section",
+                row_index + 1,
+                column_index + 1
+            );
+        }
+    }
+}
+
 /// Every chart in the same workbook states where its plot area sits inside the
 /// chart area, because the template floats each chart over the cells that print
 /// its heading — `january income:` and `$1,225` for this one — and the chart's
