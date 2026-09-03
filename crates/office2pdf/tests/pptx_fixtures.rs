@@ -908,28 +908,41 @@ fn shadow_blur_uses_one_gaussian_asset_per_shape() {
 /// stacked bar, radar, and doughnut charts.
 const INTRODUCTION_DECK_FIXTURE: &str = "office2pdf_introduction_ko.pptx";
 
+/// Convert one slide of the introduction deck on its own.
+fn assert_slide_converts(slide: u32) {
+    let options = ConvertOptions {
+        slide_range: Some(office2pdf::config::SlideRange::new(slide, slide)),
+        ..ConvertOptions::default()
+    };
+    let result =
+        office2pdf::convert_with_options(fixture_path(INTRODUCTION_DECK_FIXTURE), &options)
+            .unwrap_or_else(|error| panic!("slide {slide} must convert: {error}"));
+    assert!(
+        result.pdf.starts_with(b"%PDF"),
+        "slide {slide} output should start with PDF magic bytes"
+    );
+    common::validate_pdf_with_qpdf(&result.pdf);
+}
+
 /// Converting all thirty slides costs ~80s in a debug build, too much for the
-/// default suite to pay on every platform. The fast path renders the three
-/// slides that carry the deck's hardest content — the gradient title slide, the
+/// default suite to pay on every platform. One test per slide renders the
+/// three that carry the deck's hardest content — the gradient title slide, the
 /// stacked bar chart, and the monospaced code blocks — and the whole deck is
 /// covered by the `#[ignore]`d test below.
-#[test]
-fn smoke_introduction_deck_representative_slides() {
-    let path = fixture_path(INTRODUCTION_DECK_FIXTURE);
-    for slide in [1u32, 17, 20] {
-        let options = ConvertOptions {
-            slide_range: Some(office2pdf::config::SlideRange::new(slide, slide)),
-            ..ConvertOptions::default()
-        };
-        let result = office2pdf::convert_with_options(&path, &options)
-            .unwrap_or_else(|error| panic!("slide {slide} must convert: {error}"));
-        assert!(
-            result.pdf.starts_with(b"%PDF"),
-            "slide {slide} output should start with PDF magic bytes"
-        );
-        common::validate_pdf_with_qpdf(&result.pdf);
-    }
+macro_rules! introduction_deck_slide_tests {
+    ($($slide:literal),* $(,)?) => {
+        paste::paste! {
+            $(
+                #[test]
+                fn [<smoke_introduction_deck_slide_ $slide>]() {
+                    assert_slide_converts($slide);
+                }
+            )*
+        }
+    };
 }
+
+introduction_deck_slide_tests!(1, 17, 20);
 
 // Converting all 30 slides costs ~80s in a debug build, so the whole-deck run
 // is opt-in via `--ignored` rather than part of the default suite.

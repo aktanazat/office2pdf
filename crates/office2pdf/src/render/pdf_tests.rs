@@ -933,8 +933,8 @@ fn test_glyph_advances_em_reports_each_glyph_separately() {
 ///
 /// The mark is what the golden mocks change: theirs declare no typeface, so the
 /// line also carries the theme's minor Latin font, and the shared box moves.
-/// [`arial_slide_seats_match_the_golden_mock_exports`] pins that pair against
-/// the committed native exports.
+/// The `the_english_exports_seat_*` cases below pin that pair against the
+/// committed native exports.
 #[test]
 fn test_powerpoint_line_box_shares_every_font_on_the_line() {
     let Some((above, below)) = powerpoint_line_box_em("Arial") else {
@@ -976,85 +976,137 @@ fn test_powerpoint_line_box_shares_every_font_on_the_line() {
     );
 }
 
-/// Every Malgun Gothic seat the committed Korean golden-mock exports carry, at
-/// the eleven sizes those four decks use.
+// ── PowerPoint line-box seats, measured against native exports ─────────────
+
+/// The exports quantise a position to a 0.24pt grid, so a modelled position is
+/// within half of that of the measured one or it is a different model. A few
+/// of the sizes below land exactly on that half-grid, hence the float slack.
+const EXPORT_HALF_GRID_PT: f64 = 0.12 + 1e-9;
+
+/// Malgun Gothic's `(ascent, descent)` in em, from OS/2 `usWin` 2229/495 per
+/// 2048 upem — a 1.33008em line, so the face overflows the 1.2em box.
+const MALGUN_GOTHIC: (f64, f64) = (2229.0 / 2048.0, 495.0 / 2048.0);
+
+/// Calibri, the theme's minor Latin font: OS/2 `usWin` 1950/550 per 2048 upem.
+/// No `<a:endParaRPr>` in these decks declares a typeface, so the paragraph
+/// mark falls to this face and it shares the line box with the run's own.
+const CALIBRI: (f64, f64) = (1950.0 / 2048.0, 550.0 / 2048.0);
+
+/// Arial: OS/2 `usWin` 1854/434 per 2048 upem.
+const ARIAL: (f64, f64) = (1854.0 / 2048.0, 434.0 / 2048.0);
+
+/// Arial's `hhea` line gap in em, which PowerPoint's box does not read and
+/// only the ruled-out rival models below do.
+const ARIAL_LINE_GAP_EM: f64 = 67.0 / 2048.0;
+
+/// Georgia: `hhea` 1878/-449 per 2048 upem, no line gap, so a 1.13623em line —
+/// the one probe face whose own line fits inside the 1.2em box.
+const GEORGIA: (f64, f64) = (1878.0 / 2048.0, 449.0 / 2048.0);
+
+/// The `(above baseline, below baseline)` split of the 1.2em line box that
+/// `faces` share.
+fn split_em(faces: impl IntoIterator<Item = (f64, f64)>) -> (f64, f64) {
+    powerpoint_line_box_split_em(faces).expect("a positive ascent splits the line box")
+}
+
+/// The seat a share model puts inside the line at `size_pt`, on the whole
+/// point the exports carry.
+fn seat_pt(share_em: f64, size_pt: f64) -> f64 {
+    (share_em * size_pt).round()
+}
+
+/// The gap a bottom-anchored box keeps below its last baseline at `size_pt`.
+fn gap_below_baseline_pt(share_em: f64, size_pt: f64) -> f64 {
+    POWERPOINT_LINE_HEIGHT_FACTOR * size_pt - seat_pt(share_em, size_pt)
+}
+
+/// How many of `cases` the model behind `modelled_pt` puts outside the export
+/// half-grid.
+fn misses(cases: &[(f64, f64)], modelled_pt: impl Fn(f64) -> f64) -> usize {
+    cases
+        .iter()
+        .filter(|&&(size_pt, export_pt)| {
+            (modelled_pt(size_pt) - export_pt).abs() > EXPORT_HALF_GRID_PT
+        })
+        .count()
+}
+
+/// One test per Malgun Gothic seat the committed Korean golden-mock exports
+/// carry, at the eleven sizes those four decks use.
 ///
-/// Malgun Gothic overflows the box (usWin 2229/495 per 2048 upem, a 1.33008em
-/// line) and its own share of it is 0.98194em, which seats every one of these
-/// frames a whole point low — 1.0-1.1pt, growing with size, so a share error
-/// rather than a rounding one (issue #1176). Inverting the eleven whole-point
-/// seats bounds the share to `[0.9375, 0.94643)`.
+/// Malgun Gothic overflows the box and its own share of it is 0.98194em, which
+/// seats every one of these frames a whole point low — 1.0-1.1pt, growing with
+/// size, so a share error rather than a rounding one (issue #1176). Inverting
+/// the eleven whole-point seats bounds the share to `[0.9375, 0.94643)`.
 ///
 /// What lands inside that interval is the box Malgun Gothic shares with the
-/// paragraph mark. These decks declare no typeface on any `<a:endParaRPr>`, so
-/// the mark falls to the theme's minor Latin font, Calibri (usWin 1950/550):
-/// Malgun keeps the taller normalised ascent and Calibri the deeper normalised
-/// descent, and renormalising the pair to 1.2em gives 0.94573em.
+/// paragraph mark's Calibri: Malgun keeps the taller normalised ascent and
+/// Calibri the deeper normalised descent, and renormalising the pair to 1.2em
+/// gives 0.94573em.
 ///
 /// The figures come from the native PowerPoint 16.111 exports under
 /// `tests/golden_mocks/business/expected/pptx/`, traced with
-/// `mutool draw -F trace`, the same way
-/// [`arial_slide_seats_match_the_golden_mock_exports`] reads the English decks.
-#[test]
-fn malgun_slide_seats_match_the_korean_golden_mock_exports() {
-    let upem: f64 = 2048.0;
-    // Malgun Gothic: usWinAscent 2229, usWinDescent 495.
-    let malgun: (f64, f64) = (2229.0 / upem, 495.0 / upem);
-    // Calibri, the theme's minor Latin font: usWinAscent 1950, usWinDescent 550.
-    let calibri: (f64, f64) = (1950.0 / upem, 550.0 / upem);
+/// `mutool draw -F trace`, the same way the Arial cases below read the English
+/// decks.
+macro_rules! malgun_seat_cases {
+    ($($name:ident: $size_pt:expr => $export_pt:expr;)*) => {
+        /// (font size pt, the seat the exports put inside the line, in pt).
+        const MALGUN_EXPORTED: &[(f64, f64)] = &[$(($size_pt, $export_pt)),*];
 
-    let (above, below) = powerpoint_line_box_split_em([malgun, calibri])
-        .expect("a positive ascent splits the line box");
+        $(
+            #[test]
+            fn $name() {
+                let seat = seat_pt(split_em([MALGUN_GOTHIC, CALIBRI]).0, $size_pt);
+                assert!(
+                    (seat - $export_pt).abs() <= EXPORT_HALF_GRID_PT,
+                    "at {}pt the Korean exports seat the baseline {}pt into the \
+                     line; the shared box predicts {seat}pt",
+                    $size_pt,
+                    $export_pt
+                );
+            }
+        )*
+    };
+}
+
+malgun_seat_cases! {
+    the_korean_exports_seat_11pt: 11.0 => 9.96;
+    the_korean_exports_seat_12_5pt: 12.5 => 12.06;
+    the_korean_exports_seat_13pt: 13.0 => 11.88;
+    the_korean_exports_seat_15pt: 15.0 => 14.04;
+    the_korean_exports_seat_16pt: 16.0 => 14.88;
+    the_korean_exports_seat_17pt: 17.0 => 16.08;
+    the_korean_exports_seat_18pt: 18.0 => 17.04;
+    the_korean_exports_seat_28pt: 28.0 => 26.04;
+    the_korean_exports_seat_32pt: 32.0 => 30.00;
+    the_korean_exports_seat_38pt: 38.0 => 36.00;
+    the_korean_exports_seat_40pt: 40.0 => 37.92;
+}
+
+#[test]
+fn the_malgun_shared_split_spans_the_line() {
+    let (above, below) = split_em([MALGUN_GOTHIC, CALIBRI]);
     assert!(
         (above + below - POWERPOINT_LINE_HEIGHT_FACTOR).abs() < 1e-9,
         "the split must still span the 1.2em line, got {above} + {below}"
     );
+}
 
-    // (font size pt, the seat the exports put inside the line, in pt).
-    const EXPORTED: [(f64, f64); 11] = [
-        (11.0, 9.96),
-        (12.5, 12.06),
-        (13.0, 11.88),
-        (15.0, 14.04),
-        (16.0, 14.88),
-        (17.0, 16.08),
-        (18.0, 17.04),
-        (28.0, 26.04),
-        (32.0, 30.00),
-        (38.0, 36.00),
-        (40.0, 37.92),
-    ];
-    // The exports quantise a position to a 0.24pt grid, so a whole-point seat
-    // is within half of that of the measured one or it is a different model.
-    const HALF_GRID_PT: f64 = 0.12 + 1e-9;
-
-    let malgun_alone: f64 = powerpoint_line_box_split_em([malgun])
-        .expect("a positive ascent splits the line box")
-        .0;
-    let mut malgun_alone_misses: usize = 0;
-    for (size_pt, export_pt) in EXPORTED {
-        let seat_pt: f64 = (above * size_pt).round();
-        assert!(
-            (seat_pt - export_pt).abs() <= HALF_GRID_PT,
-            "at {size_pt}pt the Korean exports seat the baseline {export_pt}pt \
-             into the line; the shared box predicts {seat_pt}pt"
-        );
-        if ((malgun_alone * size_pt).round() - export_pt).abs() > HALF_GRID_PT {
-            malgun_alone_misses += 1;
-        }
-    }
-
-    // Triangulation: Malgun's own share has to be a model this table rules out,
-    // or the table would pass without the mark's face in the box at all.
+/// Triangulation: Malgun's own share has to be a model this table rules out,
+/// or the table would pass without the mark's face in the box at all.
+#[test]
+fn the_korean_seats_rule_out_malguns_own_share() {
+    let malgun_alone = split_em([MALGUN_GOTHIC]).0;
     assert_eq!(
-        malgun_alone_misses, 10,
+        misses(MALGUN_EXPORTED, |size_pt| seat_pt(malgun_alone, size_pt)),
+        10,
         "Malgun Gothic's own {malgun_alone}em share must miss ten of the eleven \
          cells — 12.5pt is the one size where the two round together"
     );
 }
 
-/// Every Arial seat the committed golden-mock exports carry, at the twelve
-/// sizes those decks use.
+/// One test per Arial seat the committed golden-mock exports carry, at the
+/// twelve sizes those decks use.
 ///
 /// The figures come from the native PowerPoint 16.111 exports under
 /// `tests/golden_mocks/business/expected/pptx/`, traced with
@@ -1070,171 +1122,175 @@ fn malgun_slide_seats_match_the_korean_golden_mock_exports() {
 /// 0.94471em #1118 fitted to this same table, and rounds to the same point at
 /// all twelve sizes — which is why reading the gap as the difference held for
 /// as long as it did.
-#[test]
-fn arial_slide_seats_match_the_golden_mock_exports() {
-    let upem: f64 = 2048.0;
-    // Arial: usWinAscent 1854, usWinDescent 434 (hhea also declares a 67-unit
-    // line gap, which PowerPoint's box does not read).
-    let arial: (f64, f64) = (1854.0 / upem, 434.0 / upem);
-    // Calibri, the theme's minor Latin font: usWinAscent 1950, usWinDescent 550.
-    let calibri: (f64, f64) = (1950.0 / upem, 550.0 / upem);
+macro_rules! arial_seat_cases {
+    ($($name:ident: $size_pt:expr => $export_pt:expr;)*) => {
+        /// (font size pt, the seat the exports put inside the line, in pt).
+        const ARIAL_EXPORTED: &[(f64, f64)] = &[$(($size_pt, $export_pt)),*];
 
-    let (above, below) = powerpoint_line_box_split_em([arial, calibri])
-        .expect("a positive ascent splits the line box");
+        $(
+            #[test]
+            fn $name() {
+                let seat = seat_pt(split_em([ARIAL, CALIBRI]).0, $size_pt);
+                assert!(
+                    (seat - $export_pt).abs() <= EXPORT_HALF_GRID_PT,
+                    "at {}pt the exports seat the baseline {}pt into the line; \
+                     the split predicts {seat}pt",
+                    $size_pt,
+                    $export_pt
+                );
+            }
+        )*
+    };
+}
+
+arial_seat_cases! {
+    the_english_exports_seat_12pt: 12.0 => 11.04;
+    the_english_exports_seat_12_5pt: 12.5 => 12.06;
+    the_english_exports_seat_13pt: 13.0 => 11.88;
+    the_english_exports_seat_14_5pt: 14.5 => 13.92;
+    the_english_exports_seat_15pt: 15.0 => 13.92;
+    the_english_exports_seat_17pt: 17.0 => 16.08;
+    the_english_exports_seat_18pt: 18.0 => 17.04;
+    the_english_exports_seat_19pt: 19.0 => 17.88;
+    the_english_exports_seat_28pt: 28.0 => 26.04;
+    the_english_exports_seat_30pt: 30.0 => 28.08;
+    the_english_exports_seat_32pt: 32.0 => 30.00;
+    the_english_exports_seat_40pt: 40.0 => 37.92;
+}
+
+#[test]
+fn the_arial_shared_split_spans_the_line() {
+    let (above, below) = split_em([ARIAL, CALIBRI]);
     assert!(
         (above + below - POWERPOINT_LINE_HEIGHT_FACTOR).abs() < 1e-9,
         "the split must still span the 1.2em line, got {above} + {below}"
     );
+}
 
-    // (font size pt, the seat the exports put inside the line, in pt).
-    const EXPORTED: [(f64, f64); 12] = [
-        (12.0, 11.04),
-        (12.5, 12.06),
-        (13.0, 11.88),
-        (14.5, 13.92),
-        (15.0, 13.92),
-        (17.0, 16.08),
-        (18.0, 17.04),
-        (19.0, 17.88),
-        (28.0, 26.04),
-        (30.0, 28.08),
-        (32.0, 30.00),
-        (40.0, 37.92),
-    ];
-    // The exports quantise a position to a 0.24pt grid, so a whole-point seat
-    // is within half of that of the measured one or it is a different model.
-    const HALF_GRID_PT: f64 = 0.12 + 1e-9;
-
-    let ascent_em: f64 = arial.0;
-    let descent_em: f64 = arial.1;
-    let line_gap_em: f64 = 67.0 / upem;
-    let natural_em: f64 = ascent_em + descent_em + line_gap_em;
-    let rivals: [(&str, f64); 3] = [
-        (
-            "the even split",
-            (POWERPOINT_LINE_HEIGHT_FACTOR + ascent_em - descent_em) / 2.0,
-        ),
-        (
-            "Arial's own gap-free share, with no mark on the line",
-            POWERPOINT_LINE_HEIGHT_FACTOR * ascent_em / (ascent_em + descent_em),
-        ),
-        (
-            "the gap given to the ascent side",
-            POWERPOINT_LINE_HEIGHT_FACTOR * (ascent_em + line_gap_em) / natural_em,
-        ),
-    ];
-    let mut rival_misses: [usize; 3] = [0; 3];
-
-    for (size_pt, export_pt) in EXPORTED {
-        let seat_pt: f64 = (above * size_pt).round();
-        assert!(
-            (seat_pt - export_pt).abs() <= HALF_GRID_PT,
-            "at {size_pt}pt the exports seat the baseline {export_pt}pt into the \
-             line; the split predicts {seat_pt}pt"
-        );
-        for (index, (_, share_em)) in rivals.iter().enumerate() {
-            if ((share_em * size_pt).round() - export_pt).abs() > HALF_GRID_PT {
-                rival_misses[index] += 1;
-            }
-        }
-    }
-
-    // Triangulation: each rival has to be ruled out by this table, or the table
-    // would pass on it too. The even split survives all but the 28pt cells,
-    // which is why it stood until #1118.
-    for ((name, _), misses) in rivals.iter().zip(rival_misses) {
-        assert!(
-            misses > 0,
-            "{name} must be a model this table rules out, but it misses none of \
-             the {} cells",
-            EXPORTED.len()
-        );
-    }
+/// Triangulation: the even split has to be a model this table rules out, or
+/// the table would pass on it too. It survives all but the 28pt cells, which
+/// is why it stood until #1118.
+#[test]
+fn the_english_seats_rule_out_the_even_split() {
+    let even_em = (POWERPOINT_LINE_HEIGHT_FACTOR + ARIAL.0 - ARIAL.1) / 2.0;
     assert_eq!(
-        rival_misses[0], 1,
+        misses(ARIAL_EXPORTED, |size_pt| seat_pt(even_em, size_pt)),
+        1,
         "only the 28pt cells separate the even split from the shared box"
     );
 }
 
-/// A face whose own line *fits* inside the 1.2em box is shared like any other
-/// — the extra leading is not halved.
+/// Triangulation: Arial alone on the line, with no paragraph mark sharing the
+/// box, has to be ruled out by the same table.
+#[test]
+fn the_english_seats_rule_out_arials_own_gap_free_share() {
+    let alone_em = POWERPOINT_LINE_HEIGHT_FACTOR * ARIAL.0 / (ARIAL.0 + ARIAL.1);
+    assert!(
+        misses(ARIAL_EXPORTED, |size_pt| seat_pt(alone_em, size_pt)) > 0,
+        "Arial's own gap-free share must be a model this table rules out, but \
+         it misses none of the {} cells",
+        ARIAL_EXPORTED.len()
+    );
+}
+
+/// Triangulation: reading the `hhea` line gap as ascent-side leading has to be
+/// ruled out by the same table.
+#[test]
+fn the_english_seats_rule_out_giving_the_line_gap_to_the_ascent() {
+    let natural_em = ARIAL.0 + ARIAL.1 + ARIAL_LINE_GAP_EM;
+    let with_gap_em = POWERPOINT_LINE_HEIGHT_FACTOR * (ARIAL.0 + ARIAL_LINE_GAP_EM) / natural_em;
+    assert!(
+        misses(ARIAL_EXPORTED, |size_pt| seat_pt(with_gap_em, size_pt)) > 0,
+        "the gap given to the ascent side must be a model this table rules \
+         out, but it misses none of the {} cells",
+        ARIAL_EXPORTED.len()
+    );
+}
+
+/// One test per gap the one-factor probe deck keeps below its last baseline,
+/// at the 14 sizes it carries: a face whose own line *fits* inside the 1.2em
+/// box is shared like any other, and the extra leading is not halved.
 ///
-/// Measured on a native PowerPoint 16.112 export of a one-factor probe deck:
-/// bottom-anchored text boxes with every inset zeroed, traced with
-/// `mutool draw -F trace`, at the 14 sizes below. Georgia is the probe's only
-/// face that fits the box (hhea 1878/-449 per 2048 upem, no line gap, so a
-/// 1.13623em line), which is what lets it tell the two shares apart: its
-/// proportional share is 0.968457em and its even share 0.948877em. A
-/// bottom-anchored box keeps `1.2 x size - round(share x size)` under its last
-/// baseline, the seat being rounded to a whole point (issue #1074).
+/// Measured on a native PowerPoint 16.112 export: bottom-anchored text boxes
+/// with every inset zeroed, traced with `mutool draw -F trace`. Georgia is the
+/// probe's only face that fits the box, which is what lets it tell the two
+/// shares apart: its proportional share is 0.968457em and its even share
+/// 0.948877em. A bottom-anchored box keeps `1.2 x size - round(share x size)`
+/// under its last baseline, the seat being rounded to a whole point (#1074).
 ///
 /// The even split is outside the export's 0.12pt half-grid at 9 of the 14
 /// sizes and 2.04pt out at 72pt; the proportional share is inside it at all 14.
 /// The five sizes where they agree — 8, 18, 24, 28 and 48 — are the ones where
 /// they round to the same point, which is how the branch survived #660 (issue
 /// #1118).
-#[test]
-fn a_face_that_fits_the_line_box_is_shared_like_any_other() {
-    // Georgia: hhea ascender 1878, descender -449, no line gap, 2048 upem.
-    let upem: f64 = 2048.0;
-    let ascent_em: f64 = 1878.0 / upem;
-    let descent_em: f64 = 449.0 / upem;
-    assert!(
-        ascent_em + descent_em < POWERPOINT_LINE_HEIGHT_FACTOR,
-        "this test needs a face that fits the box, got {}em",
-        ascent_em + descent_em
-    );
+macro_rules! georgia_gap_cases {
+    ($($name:ident: $size_pt:expr => $export_pt:expr;)*) => {
+        /// (font size pt, the gap the export keeps below the last baseline in
+        /// pt).
+        const GEORGIA_PROBE: &[(f64, f64)] = &[$(($size_pt, $export_pt)),*];
 
-    let (above, below) = powerpoint_line_box_split_em([(ascent_em, descent_em)])
-        .expect("a positive ascent splits the line box");
+        $(
+            #[test]
+            fn $name() {
+                let modelled = gap_below_baseline_pt(split_em([GEORGIA]).0, $size_pt);
+                assert!(
+                    (modelled - $export_pt).abs() <= EXPORT_HALF_GRID_PT,
+                    "at {}pt the export keeps {}pt under the baseline; the \
+                     split predicts {modelled}pt",
+                    $size_pt,
+                    $export_pt
+                );
+            }
+        )*
+    };
+}
+
+georgia_gap_cases! {
+    the_probe_gap_at_8pt: 8.0 => 1.680;
+    the_probe_gap_at_11pt: 11.0 => 2.160;
+    the_probe_gap_at_14pt: 14.0 => 2.800;
+    the_probe_gap_at_18pt: 18.0 => 4.560;
+    the_probe_gap_at_24pt: 24.0 => 5.920;
+    the_probe_gap_at_28pt: 28.0 => 6.560;
+    the_probe_gap_at_32pt: 32.0 => 7.400;
+    the_probe_gap_at_36pt: 36.0 => 8.200;
+    the_probe_gap_at_40pt: 40.0 => 8.960;
+    the_probe_gap_at_44pt: 44.0 => 9.880;
+    the_probe_gap_at_48pt: 48.0 => 11.560;
+    the_probe_gap_at_54pt: 54.0 => 12.760;
+    the_probe_gap_at_72pt: 72.0 => 16.360;
+    the_probe_gap_at_100pt: 100.0 => 23.120;
+}
+
+/// The probe only tells the two shares apart while its face fits the box.
+#[test]
+fn georgia_is_a_face_that_fits_the_line_box() {
+    assert!(
+        GEORGIA.0 + GEORGIA.1 < POWERPOINT_LINE_HEIGHT_FACTOR,
+        "this probe needs a face that fits the box, got {}em",
+        GEORGIA.0 + GEORGIA.1
+    );
+}
+
+#[test]
+fn the_georgia_split_spans_the_line() {
+    let (above, below) = split_em([GEORGIA]);
     assert!(
         (above + below - POWERPOINT_LINE_HEIGHT_FACTOR).abs() < 1e-9,
         "the split must still span the 1.2em line, got {above} + {below}"
     );
+}
 
-    // (font size pt, the gap the export keeps below the last baseline in pt).
-    const PROBE: [(f64, f64); 14] = [
-        (8.0, 1.680),
-        (11.0, 2.160),
-        (14.0, 2.800),
-        (18.0, 4.560),
-        (24.0, 5.920),
-        (28.0, 6.560),
-        (32.0, 7.400),
-        (36.0, 8.200),
-        (40.0, 8.960),
-        (44.0, 9.880),
-        (48.0, 11.560),
-        (54.0, 12.760),
-        (72.0, 16.360),
-        (100.0, 23.120),
-    ];
-    // The exports quantise a position to a 0.24pt grid, so a modelled gap is
-    // within half of that of the measured one or it is a different model. Two
-    // of the 14 sizes land exactly on that half-grid, hence the float slack.
-    const HALF_GRID_PT: f64 = 0.12 + 1e-9;
-    let gap_pt = |share_em: f64, size_pt: f64| -> f64 {
-        POWERPOINT_LINE_HEIGHT_FACTOR * size_pt - (share_em * size_pt).round()
-    };
-
-    let even_em: f64 = (POWERPOINT_LINE_HEIGHT_FACTOR + ascent_em - descent_em) / 2.0;
-    let mut even_misses: usize = 0;
-    for (size_pt, export_pt) in PROBE {
-        let modelled_pt: f64 = gap_pt(above, size_pt);
-        assert!(
-            (modelled_pt - export_pt).abs() <= HALF_GRID_PT,
-            "at {size_pt}pt the export keeps {export_pt}pt under the baseline; \
-             the split predicts {modelled_pt}pt"
-        );
-        if (gap_pt(even_em, size_pt) - export_pt).abs() > HALF_GRID_PT {
-            even_misses += 1;
-        }
-    }
-
-    // Triangulation: without this the even split would pass the loop above at
-    // the five sizes where the two shares round to the same point.
+/// Triangulation: without this the even split would pass the cases above at
+/// the five sizes where the two shares round to the same point.
+#[test]
+fn the_probe_gaps_rule_out_the_even_split() {
+    let even_em = (POWERPOINT_LINE_HEIGHT_FACTOR + GEORGIA.0 - GEORGIA.1) / 2.0;
     assert_eq!(
-        even_misses, 9,
+        misses(GEORGIA_PROBE, |size_pt| gap_below_baseline_pt(
+            even_em, size_pt
+        )),
+        9,
         "the even split must still be the model this probe rules out"
     );
 }
