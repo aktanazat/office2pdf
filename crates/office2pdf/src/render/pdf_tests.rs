@@ -518,11 +518,80 @@ fn test_pdfa_timestamp_is_not_hardcoded() {
     );
 }
 
+/// The six fields `utc_datetime_from_unix_secs` has to fill for `secs`.
+fn assert_civil_utc(secs: i64, want: (i32, u8, u8, u8, u8, u8)) {
+    let dt = utc_datetime_from_unix_secs(secs);
+    assert_eq!(
+        (
+            dt.year(),
+            dt.month(),
+            dt.day(),
+            dt.hour(),
+            dt.minute(),
+            dt.second()
+        ),
+        (
+            Some(want.0),
+            Some(want.1),
+            Some(want.2),
+            Some(want.3),
+            Some(want.4),
+            Some(want.5)
+        ),
+        "unix second {secs} names a different civil UTC datetime"
+    );
+}
+
+/// Unix second → the civil UTC datetime it names. The expected values come
+/// from an independent implementation (Python's
+/// `datetime.fromtimestamp(secs, timezone.utc)`), so the table is an oracle
+/// for Hinnant's algorithm rather than a second copy of it. Each case names
+/// the boundary it covers, and the century and leap-day cases are the ones
+/// that reach the `/100` and `/400` branches a same-day-only test never runs.
+macro_rules! utc_datetime_cases {
+    ($($name:ident: $secs:expr => ($y:expr, $mo:expr, $d:expr, $h:expr, $mi:expr, $s:expr);)*) => {
+        $(
+            #[test]
+            fn $name() {
+                assert_civil_utc($secs, ($y, $mo, $d, $h, $mi, $s));
+            }
+        )*
+    };
+}
+
+utc_datetime_cases! {
+    the_unix_epoch: 0 => (1970, 1, 1, 0, 0, 0);
+    the_last_second_of_the_epoch_day: 86_399 => (1970, 1, 1, 23, 59, 59);
+    the_first_second_of_the_second_day: 86_400 => (1970, 1, 2, 0, 0, 0);
+    the_leap_day_of_a_400_divisible_year: 951_782_400 => (2000, 2, 29, 0, 0, 0);
+    a_leap_day_afternoon: 1_709_210_096 => (2024, 2, 29, 12, 34, 56);
+    the_day_after_a_leap_day: 1_709_251_200 => (2024, 3, 1, 0, 0, 0);
+    the_last_second_of_a_year: 1_767_225_599 => (2025, 12, 31, 23, 59, 59);
+    the_signed_32_bit_second_overflow: 2_147_483_647 => (2038, 1, 19, 3, 14, 7);
+    the_last_second_of_february_in_a_century_year: 4_107_542_399 => (2100, 2, 28, 23, 59, 59);
+    the_first_of_march_in_a_century_year: 4_107_542_400 => (2100, 3, 1, 0, 0, 0);
+}
+
+/// The wiring: the helper above converts the second the clock just reported,
+/// so a timestamp in the PDF names the conversion rather than a fixed date.
 #[test]
-fn test_current_utc_datetime_is_valid() {
-    // The helper should produce a valid Datetime that can create a Timestamp.
+fn current_utc_datetime_converts_the_second_it_just_read() {
+    let clock = || {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the system clock is at or past the Unix epoch")
+            .as_secs() as i64
+    };
+
+    let before = clock();
     let dt = current_utc_datetime();
-    let _ts = typst_pdf::Timestamp::new_utc(dt);
+    let after = clock();
+
+    assert!(
+        (before..=after).any(|secs| utc_datetime_from_unix_secs(secs) == dt),
+        "the datetime must be one of the seconds spanning the call, \
+         [{before}, {after}], got {dt:?}"
+    );
 }
 
 #[test]

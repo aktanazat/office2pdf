@@ -264,11 +264,24 @@ fn structure_minimal() {
 // no-slides.pptx
 // ---------------------------------------------------------------------------
 
+/// A deck whose `p:sldIdLst` is empty still converts: the parser reports no
+/// slides, so nothing in the file contributes a page and the compiler falls
+/// back to its own blank one.
 #[test]
 fn smoke_no_slides() {
-    // Must not panic — either empty result or parse error is fine.
     let path = fixture_path("no-slides.pptx");
-    let _ = office2pdf::convert(&path);
+    let result = office2pdf::convert(&path).expect("a deck with no slides must still convert");
+
+    assert!(
+        result.pdf.starts_with(b"%PDF"),
+        "output should start with PDF magic bytes"
+    );
+    assert_eq!(
+        result.metrics.expect("convert reports metrics").page_count,
+        0,
+        "no-slides.pptx declares no slides, so no page comes from the file"
+    );
+    common::validate_pdf_with_qpdf(&result.pdf);
 }
 
 #[test]

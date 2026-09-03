@@ -326,9 +326,9 @@ fn test_bidi_mixed_rtl_ltr_docx() {
     );
 }
 
-#[test]
-fn test_edge_image_only_docx() {
-    let doc = Document {
+/// A one-page flow document whose only block is `data`, declared as a PNG.
+fn image_only_document(data: Vec<u8>) -> Document {
+    Document {
         metadata: Metadata::default(),
         pages: vec![Page::Flow(FlowPage {
             first_header: None,
@@ -339,7 +339,7 @@ fn test_edge_image_only_docx() {
                 rotation_deg: None,
                 flip_h: false,
                 flip_v: false,
-                data: vec![0x89, 0x50, 0x4E, 0x47],
+                data,
                 format: ImageFormat::Png,
                 width: Some(100.0),
                 height: Some(100.0),
@@ -358,8 +358,42 @@ fn test_edge_image_only_docx() {
             page_numbering: None,
         })],
         styles: StyleSheet::default(),
-    };
-    let _result = render_document(&doc);
+    }
+}
+
+#[test]
+fn test_edge_image_only_docx_produces_valid_pdf() {
+    let doc = image_only_document(crate::test_support::make_test_png());
+    let pdf = render_document(&doc).expect("a page whose only block is an image must render");
+    assert!(
+        pdf.starts_with(b"%PDF"),
+        "Image-only document should produce valid PDF"
+    );
+    let image_xobject = b"/Subtype /Image";
+    assert!(
+        pdf.windows(image_xobject.len())
+            .any(|window| window == image_xobject),
+        "the page's only block is the PNG, so the PDF has to carry it as an \
+         image XObject"
+    );
+}
+
+/// The same page carrying only the PNG signature prefix. Typst cannot decode
+/// that, and the failure has to come back as a render error rather than as a
+/// panic out of the compiler.
+#[test]
+fn test_edge_undecodable_image_returns_render_error() {
+    let doc = image_only_document(vec![0x89, 0x50, 0x4E, 0x47]);
+    let err = render_document(&doc).expect_err("an undecodable image must not render");
+    match &err {
+        ConvertError::Render(msg) => {
+            assert!(
+                msg.contains("decode image"),
+                "Error should name the failed image decode, got {msg:?}"
+            );
+        }
+        _ => panic!("Expected Render error for an undecodable image, got {err:?}"),
+    }
 }
 
 #[test]

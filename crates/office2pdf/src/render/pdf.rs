@@ -665,14 +665,18 @@ pub(crate) fn compiled_paint_sequence(
 /// Convert the current system time to a Typst `Datetime` in UTC.
 ///
 /// Uses `std::time::SystemTime` to avoid an external chrono dependency.
-/// The civil date is computed from the Unix timestamp using Howard Hinnant's
-/// algorithm (<http://howardhinnant.github.io/date_algorithms.html>).
 fn current_utc_datetime() -> Datetime {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    let secs = duration.as_secs() as i64;
+    utc_datetime_from_unix_secs(duration.as_secs() as i64)
+}
 
+/// Convert a Unix timestamp to a Typst `Datetime` in UTC.
+///
+/// The civil date is computed from the timestamp using Howard Hinnant's
+/// algorithm (<http://howardhinnant.github.io/date_algorithms.html>).
+fn utc_datetime_from_unix_secs(secs: i64) -> Datetime {
     // Split into days since epoch and time-of-day
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);
@@ -684,7 +688,7 @@ fn current_utc_datetime() -> Datetime {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097) as u32; // day of era [0, 146096]
-    let yoe = (doe - doe / 1461 + doe / 36524 - doe / 146096) / 365;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
     let mp = (5 * doy + 2) / 153; // [0, 11]
@@ -693,7 +697,7 @@ fn current_utc_datetime() -> Datetime {
     let y = if m <= 2 { y + 1 } else { y } as i32;
 
     Datetime::from_ymd_hms(y, m, d, hours, minutes, seconds)
-        .expect("valid date derived from SystemTime")
+        .expect("valid civil date derived from a Unix timestamp")
 }
 
 /// Font data source: either a static reference to cached fonts or owned

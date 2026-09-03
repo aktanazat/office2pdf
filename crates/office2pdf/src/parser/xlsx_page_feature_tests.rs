@@ -764,13 +764,20 @@ fn test_parse_xlsx_extracts_metadata() {
     );
 }
 
+/// A workbook that declares no core properties: each empty property has to
+/// reach the IR as `None`, not as `Some("")`, or an empty title and author go
+/// into the PDF's own metadata. `created` and `modified` are set here because
+/// umya-spreadsheet stamps its own default into every workbook it writes.
 #[test]
-fn test_parse_xlsx_without_metadata_no_crash() {
+fn test_parse_xlsx_without_metadata_leaves_the_text_fields_unset() {
     let data = build_xlsx_bytes("Sheet1", &[("A1", "test")]);
     let parser = XlsxParser;
     let (doc, _warnings) = parser.parse(&data, &ConvertOptions::default()).unwrap();
 
-    let _ = doc.metadata;
+    assert_eq!(doc.metadata.title, None);
+    assert_eq!(doc.metadata.author, None);
+    assert_eq!(doc.metadata.subject, None);
+    assert_eq!(doc.metadata.description, None);
 }
 
 #[test]
